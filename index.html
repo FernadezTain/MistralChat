@@ -77,7 +77,7 @@ button,input,select,textarea{font:inherit}button{color:inherit}
 .markdown-body tr:last-child td{border-bottom:0}
 .response-block{opacity:0}
 .typing{display:inline-flex;gap:5px;height:25px;align-items:center}.typing i{width:6px;height:6px;border-radius:50%;background:#909090}
-.status{min-height:18px;color:#888;font-size:12px}.status.error{color:#b42318}
+.status{min-height:18px;color:#888;font-size:12px}.status.error{color:#b42318}.status.warn{color:#9b6a10}
 .composer-wrap{position:sticky;bottom:0;padding:12px 0 8px}
 .composer{position:relative;display:flex;align-items:flex-end;gap:10px;padding:12px 12px 12px 18px;border:1px solid var(--stroke);border-radius:26px;background:var(--surface);box-shadow:0 5px 22px #0000000a;transition:border-color .3s,box-shadow .35s}
 .composer:focus-within{border-color:#10a37f70;box-shadow:0 12px 34px #00000012,0 0 0 4px #10a37f0d}
@@ -191,7 +191,7 @@ body[data-density=compact] #messages{gap:14px}
  <div class="divider"></div><p class="caption">Поведение чата</p>
  <label class="row"><span class="copy"><strong>Enter отправляет</strong><small>Shift + Enter для новой строки</small></span><span class="switch"><input id="enterSetting" type="checkbox" checked><span></span></span></label>
  <div class="range"><div class="range-head"><label for="temperatureSetting">Креативность ответа</label><output id="temperatureOutput">0,7</output></div><input id="temperatureSetting" type="range" min="0" max="1.5" step="0.1" value="0.7"></div>
- <div class="row"><div class="copy"><strong>Длина ответа</strong><small>Максимальный объём генерации</small></div><select id="lengthSetting"><option value="512">Короткий</option><option value="1024" selected>Обычный</option><option value="2048">Подробный</option></select></div>
+ <div class="row"><div class="copy"><strong>Длина ответа</strong><small>Максимальный объём генерации</small></div><select id="lengthSetting"><option value="512">Короткий</option><option value="1024">Обычный</option><option value="2048">Подробный</option><option value="4096" selected>Очень подробный</option><option value="8192">Максимум (код)</option></select></div>
 </section>
 
 <section class="panel diagnostics-panel" id="diagnosticsPanel" hidden>
@@ -350,7 +350,8 @@ sendButton.addEventListener("pointerdown", () => {
 
 /* ---------- Liquid Glass (dashersw/liquid-glass-js) ---------- */
 const LG_BASE = "https://cdn.jsdelivr.net/gh/dashersw/liquid-glass-js@main/";
-const LG_H2C = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+// html2canvas-pro понимает color-mix() и другие современные CSS-цвета (обычный html2canvas 1.4.1 падает)
+const LG_H2C = "https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js";
 let glassReady = false;
 const loadScript = (src) => new Promise((ok, fail) => {
   const s = document.createElement("script");
@@ -386,6 +387,8 @@ function applyGlass() {
     link.rel = "stylesheet"; link.href = LG_BASE + "glass.css";
     document.head.append(link);
     await loadScript(LG_H2C);
+    // liquid-glass-js ищет глобальный html2canvas
+    window.html2canvas ||= window.html2canvasPro;
     await loadScript(LG_BASE + "container.js");
     await loadScript(LG_BASE + "button.js");
     glassReady = typeof Container === "function";
@@ -395,7 +398,11 @@ function applyGlass() {
 })();
 
 /* ---------- состояние и настройки ---------- */
-function setStatus(m, err = false) { statusEl.textContent = m; statusEl.classList.toggle("error", err); }
+function setStatus(m, err = false, warn = false) {
+  statusEl.textContent = m;
+  statusEl.classList.toggle("error", err);
+  statusEl.classList.toggle("warn", warn);
+}
 function getApiKeyError() {
   const v = apiKeyInput.value.trim();
   return !v || /^[A-Za-z0-9_-]+$/.test(v) ? "" : "В ключе есть лишние символы. Проверьте раскладку: ключ состоит из латинских букв, цифр, «_» и «-».";
@@ -682,12 +689,17 @@ chatForm.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify({ model: modelSelect.value, messages: conversation, temperature: Number(settings.temperature.value), max_tokens: Number(settings.maxTokens.value) }),
     });
-    const answer = result.choices?.[0]?.message?.content;
+    const choice = result.choices?.[0];
+    const answer = choice?.message?.content;
     if (!answer) throw new Error("Модель вернула пустой ответ.");
     await renderAssistantAnswer(pending.querySelector(".assistant-copy"), answer);
     conversation.push({ role: "assistant", content: answer });
     persist();
-    setStatus("");
+    if (choice.finish_reason === "length") {
+      setStatus("Ответ обрезан по лимиту длины. Увеличьте «Длину ответа» в настройках или напишите «продолжи».", false, true);
+    } else {
+      setStatus("");
+    }
   } catch (error) {
     stopTyping(pending); pending.remove(); conversation.pop();
     logError(error, { model: modelSelect.value, endpoint: "/v1/chat/completions" });
